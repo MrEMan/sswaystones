@@ -2,13 +2,18 @@
   This file is licensed under the MIT License!
   https://github.com/sylvxa/sswaystones/blob/main/LICENSE
 */
+
 package lol.sylvie.sswaystones.worldgen;
 
 import com.mojang.datafixers.util.Pair;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+
 import java.util.ArrayList;
 import java.util.List;
+
 import lol.sylvie.sswaystones.Waystones;
 import lol.sylvie.sswaystones.mixin.StructureTemplatePoolAccessor;
+
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
 import net.minecraft.core.RegistryAccess;
@@ -21,57 +26,233 @@ import net.minecraft.world.level.levelgen.structure.pools.StructurePoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.StructureTemplatePool;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureProcessorList;
 
-// reference https://github.com/finallion/VillagersPlus/blob/1.20_multiloader/common/src/main/java/com/lion/villagersplus/util/StructurePoolAddition.java
-public class VillageInjector {
-    private static final ResourceKey<StructureProcessorList> EMPTY_PROCESSOR_LIST_KEY = ResourceKey
-            .create(Registries.PROCESSOR_LIST, Identifier.withDefaultNamespace("empty"));
+public final class VillageInjector {
 
-    private static final Identifier plainsPool = Identifier.withDefaultNamespace("village/plains/terminators");
-    private static final Identifier desertPool = Identifier.withDefaultNamespace("village/desert/terminators");
-    private static final Identifier savannaPool = Identifier.withDefaultNamespace("village/savanna/terminators");
-    private static final Identifier snowyPool = Identifier.withDefaultNamespace("village/snowy/terminators");
-    private static final Identifier taigaPool = Identifier.withDefaultNamespace("village/taiga/terminators");
+    private static final ResourceKey<StructureProcessorList> EMPTY_PROCESSOR_LIST_KEY =
+            ResourceKey.create(
+                    Registries.PROCESSOR_LIST,
+                    Identifier.withDefaultNamespace("empty")
+            );
 
-    public static void addBuildingToPool(Registry<StructureTemplatePool> templatePoolRegistry,
-            Registry<StructureProcessorList> processorListRegistry, Identifier poolId, String structureId, int weight) {
-        Holder<StructureProcessorList> processorList = processorListRegistry.getOrThrow(EMPTY_PROCESSOR_LIST_KEY);
-        StructureTemplatePool pool = templatePoolRegistry.getValue(poolId);
-        if (pool == null)
-            return;
+    private static final String WAYSTONE_PATH = "waystone";
 
-        SinglePoolElement piece = SinglePoolElement.single(structureId, processorList)
-                .apply(StructureTemplatePool.Projection.RIGID);
-
-        for (int i = 0; i < weight; i++) {
-            ((StructureTemplatePoolAccessor) pool).getTemplates().add(piece);
-        }
-
-        List<Pair<StructurePoolElement, Integer>> listOfPieceEntries = new ArrayList<>(
-                ((StructureTemplatePoolAccessor) pool).getRawTemplates());
-        listOfPieceEntries.add(new Pair<>(piece, weight));
-        ((StructureTemplatePoolAccessor) pool).setRawTemplates(listOfPieceEntries);
+    private VillageInjector() {
     }
 
-    private static void addTownCenter(Registry<StructureTemplatePool> templatePoolRegistry,
-            Registry<StructureProcessorList> processorListRegistry, Identifier pool, String biome) {
-        addBuildingToPool(templatePoolRegistry, processorListRegistry, pool,
-                Waystones.id("village/" + biome + "/waystone").toString(), 4);
+    public static void addBuildingToPool(
+            Registry<StructureTemplatePool> templatePoolRegistry,
+            Registry<StructureProcessorList> processorListRegistry,
+            Identifier poolId,
+            String structureId,
+            int weight
+    ) {
+        StructureTemplatePool pool = templatePoolRegistry.getValue(poolId);
+
+        if (pool == null) {
+            Waystones.LOGGER.debug(
+                    "Could not find structure pool {}",
+                    poolId
+            );
+            return;
+        }
+
+        StructureTemplatePoolAccessor accessor =
+                (StructureTemplatePoolAccessor) pool;
+
+        /*
+         * Do not inject the same Waystone twice if another mod/datapack
+         * has already added it to this pool.
+         */
+        if (accessor.getRawTemplates().stream().anyMatch(entry ->
+                isWaystoneElement(entry.getFirst()))) {
+            return;
+        }
+
+        Holder<StructureProcessorList> processorList =
+                processorListRegistry.getOrThrow(
+                        EMPTY_PROCESSOR_LIST_KEY
+                );
+
+        SinglePoolElement piece =
+                SinglePoolElement
+                        .single(structureId, processorList)
+                        .apply(StructureTemplatePool.Projection.RIGID);
+
+        /*
+         * Keep both representations synchronized.
+         *
+         * StructureTemplatePool uses the flattened `templates` list for
+         * random selection while rawTemplates retains element/weight pairs.
+         */
+        for (int i = 0; i < weight; i++) {
+            accessor.getTemplates().add(piece);
+        }
+
+        List<Pair<StructurePoolElement, Integer>> rawTemplates =
+                new ArrayList<>(accessor.getRawTemplates());
+
+        rawTemplates.add(Pair.of(piece, weight));
+
+        accessor.setRawTemplates(rawTemplates);
+
+        Waystones.LOGGER.debug(
+                "Injected Waystone {} into village pool {} with weight {}",
+                structureId,
+                poolId,
+                weight
+        );
+    }
+
+    private static boolean isWaystoneElement(
+            StructurePoolElement element
+    ) {
+        if (!(element instanceof SinglePoolElement single)) {
+            return false;
+        }
+
+        Identifier id = single.getTemplateLocation();
+
+        return id.getNamespace().equals(Waystones.MOD_ID)
+                && id.getPath().endsWith(WAYSTONE_PATH);
+    }
+
+    /**
+     * Returns true for the pool naming conventions used by vanilla and
+     * common village-overhaul mods such as CTOV.
+     *
+     * Vanilla:
+     *   minecraft:village/plains/terminators
+     *
+     * CTOV:
+     *   ctov:village/plains/house
+     */
+    private static boolean isVillageTerminalPool(
+            Identifier id
+    ) {
+        String path = id.getPath();
+
+        if (!(
+                path.startsWith("village/")
+                        || path.contains("/village/")
+                        || path.startsWith("villages/")
+                        || path.contains("/villages/")
+        )) {
+            return false;
+        }
+
+        return path.endsWith("/terminators")
+                || path.endsWith("/terminator")
+                || path.endsWith("/house")
+                || path.endsWith("/houses");
+    }
+
+    private static List<Identifier> findVillagePools(
+            Registry<StructureTemplatePool> registry
+    ) {
+        List<Identifier> result = new ArrayList<>();
+
+        for (Identifier id : registry.keySet()) {
+            if (isVillageTerminalPool(id)) {
+                result.add(id);
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Selects a Waystone structure appropriate for a vanilla biome pool.
+     * Modded villages use the generic structure unless their pool name
+     * clearly identifies one of the vanilla biome types.
+     */
+    private static String getWaystoneStructure(
+            Identifier poolId
+    ) {
+        String path = poolId.getPath();
+
+        if (path.contains("/desert/")) {
+            return Waystones.id(
+                    "village/desert/waystone"
+            ).toString();
+        }
+
+        if (path.contains("/savanna/")) {
+            return Waystones.id(
+                    "village/savanna/waystone"
+            ).toString();
+        }
+
+        if (path.contains("/snowy/")) {
+            return Waystones.id(
+                    "village/snowy/waystone"
+            ).toString();
+        }
+
+        if (path.contains("/taiga/")) {
+            return Waystones.id(
+                    "village/taiga/waystone"
+            ).toString();
+        }
+
+        if (path.contains("/plains/")) {
+            return Waystones.id(
+                    "village/plains/waystone"
+            ).toString();
+        }
+
+        /*
+         * For an unknown village mod we currently use the plains structure
+         * as the neutral fallback.
+         *
+         * This should eventually become a dedicated generic structure.
+         */
+        return Waystones.id(
+                "village/plains/waystone"
+        ).toString();
     }
 
     public static void inject(MinecraftServer server) {
-        if (!Waystones.configuration.getInstance().injectVillageStructures)
+        if (!Waystones.configuration.getInstance().injectVillageStructures) {
             return;
+        }
 
-        RegistryAccess.Frozen registryAccess = server.registryAccess();
-        Registry<StructureTemplatePool> templatePoolRegistry = registryAccess.lookupOrThrow(Registries.TEMPLATE_POOL);
-        Registry<StructureProcessorList> processorListRegistry = registryAccess
-                .lookupOrThrow(Registries.PROCESSOR_LIST);
+        RegistryAccess.Frozen registryAccess =
+                server.registryAccess();
 
-        Waystones.LOGGER.info("Injecting waystone village structures");
-        addTownCenter(templatePoolRegistry, processorListRegistry, desertPool, "desert");
-        addTownCenter(templatePoolRegistry, processorListRegistry, plainsPool, "plains");
-        addTownCenter(templatePoolRegistry, processorListRegistry, savannaPool, "savanna");
-        addTownCenter(templatePoolRegistry, processorListRegistry, snowyPool, "snowy");
-        addTownCenter(templatePoolRegistry, processorListRegistry, taigaPool, "taiga");
+        Registry<StructureTemplatePool> templatePoolRegistry =
+                registryAccess.lookupOrThrow(
+                        Registries.TEMPLATE_POOL
+                );
+
+        Registry<StructureProcessorList> processorListRegistry =
+                registryAccess.lookupOrThrow(
+                        Registries.PROCESSOR_LIST
+                );
+
+        List<Identifier> villagePools =
+                findVillagePools(templatePoolRegistry);
+
+        Waystones.LOGGER.info(
+                "Found {} potential village structure pools",
+                villagePools.size()
+        );
+
+        for (Identifier pool : villagePools) {
+            String structure = getWaystoneStructure(pool);
+
+            Waystones.LOGGER.debug(
+                    "Adding Waystone to village pool {} using {}",
+                    pool,
+                    structure
+            );
+
+            addBuildingToPool(
+                    templatePoolRegistry,
+                    processorListRegistry,
+                    pool,
+                    structure,
+                    4
+            );
+        }
     }
 }

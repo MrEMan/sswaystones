@@ -126,6 +126,7 @@ public final class VillageInjector {
      * CTOV:
      *   ctov:village/plains/house
      */
+/*
     private static boolean isVillageTerminalPool(
             Identifier id
     ) {
@@ -145,13 +146,53 @@ public final class VillageInjector {
                 || path.endsWith("/house")
                 || path.endsWith("/houses");
     }
+*/
+    private static boolean isVillageTerminalPool(Identifier id) {
+        String path = id.getPath();
 
+        if (!(
+                path.startsWith("village/")
+                        || path.contains("/village/")
+                        || path.startsWith("villages/")
+                        || path.contains("/villages/")
+        )) {
+            return false;
+        }
+
+        return path.endsWith("/terminators")
+                || path.endsWith("/terminator");
+    }
+
+    /*
     private static List<Identifier> findVillagePools(
             Registry<StructureTemplatePool> registry
     ) {
         List<Identifier> result = new ArrayList<>();
 
         for (Identifier id : registry.keySet()) {
+            if (isVillageTerminalPool(id)) {
+                result.add(id);
+            }
+        }
+
+        return result;
+    }
+*/
+    private static List<Identifier> findVillagePools(
+            Registry<StructureTemplatePool> registry
+    ) {
+        List<Identifier> result = new ArrayList<>();
+
+        for (Identifier id : registry.keySet()) {
+            String path = id.getPath();
+
+            if (path.contains("village")) {
+                Waystones.LOGGER.info(
+                        "Village-related template pool: {}",
+                        id
+                );
+            }
+
             if (isVillageTerminalPool(id)) {
                 result.add(id);
             }
